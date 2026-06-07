@@ -299,6 +299,6 @@ export default function AnalysisHistory() {
     </div>
   );
 }
-EOF
+export default CodeHealth ;
 
 
