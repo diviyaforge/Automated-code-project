@@ -212,24 +212,36 @@ function SignInPage({ onGoSignUp, onLogin }) {
   const [msg, setMsg] = useState(null);
   const [msgType, setMsgType] = useState("error");
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!username.trim() || !password.trim()) {
       setMsg("Please fill in all fields.");
       setMsgType("error");
       setTimeout(() => setMsg(null), 3000);
       return;
     }
-    const users = JSON.parse(localStorage.getItem("acr_users") || "[]");
-    const found = users.find(
-      (u) => (u.email === username || u.username === username) && u.password === password
-    );
-    if (found) {
-      setMsg(`Welcome back, ${found.firstName}! 🎉 Redirecting...`);
-      setMsgType("success");
-      // ✅ THIS is the key fix — redirect to dashboard after 1.5s
-      setTimeout(() => onLogin(), 1500);
-    } else {
-      setMsg("Invalid credentials. Please try again.");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.setItem("acr_token", data.access_token);
+        localStorage.setItem("acr_user", JSON.stringify(data.user));
+        setMsg(`Welcome back, ${data.user.firstName}! 🎉 Redirecting...`);
+        setMsgType("success");
+        // Redirect to dashboard after 1.5s
+        setTimeout(() => onLogin(), 1500);
+      } else {
+        // If details is a list (from pydantic), extract detail text
+        const detailMsg = typeof data.detail === "string" ? data.detail : "Invalid credentials. Please try again.";
+        setMsg(detailMsg);
+        setMsgType("error");
+        setTimeout(() => setMsg(null), 3500);
+      }
+    } catch (err) {
+      setMsg("Connection error. Is the server running?");
       setMsgType("error");
       setTimeout(() => setMsg(null), 3500);
     }
@@ -287,7 +299,7 @@ function SignUpPage({ onGoSignIn }) {
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const { firstName, lastName, email, phone, dob, password } = form;
     if (!firstName || !lastName || !email || !phone || !dob || !password) {
       setMsg("Please fill in all fields.");
@@ -295,20 +307,36 @@ function SignUpPage({ onGoSignIn }) {
       setTimeout(() => setMsg(null), 3000);
       return;
     }
-    const users = JSON.parse(localStorage.getItem("acr_users") || "[]");
-    const exists = users.find((u) => u.email === email);
-    if (exists) {
-      setMsg("An account with this email already exists.");
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          email,
+          phone,
+          dob,
+          password
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMsg("Account created! Please sign in. 🚀");
+        setMsgType("success");
+        setForm({ firstName: "", lastName: "", email: "", phone: "", dob: "", password: "" });
+        setTimeout(() => { setMsg(null); onGoSignIn(); }, 2000);
+      } else {
+        const detailMsg = typeof data.detail === "string" ? data.detail : "Signup failed. Please try again.";
+        setMsg(detailMsg);
+        setMsgType("error");
+        setTimeout(() => setMsg(null), 3500);
+      }
+    } catch (err) {
+      setMsg("Connection error. Is the server running?");
       setMsgType("error");
       setTimeout(() => setMsg(null), 3500);
-      return;
     }
-    users.push({ ...form, username: email });
-    localStorage.setItem("acr_users", JSON.stringify(users));
-    setMsg("Account created! Please sign in. 🚀");
-    setMsgType("success");
-    setForm({ firstName: "", lastName: "", email: "", phone: "", dob: "", password: "" });
-    setTimeout(() => { setMsg(null); onGoSignIn(); }, 2000);
   };
 
   return (

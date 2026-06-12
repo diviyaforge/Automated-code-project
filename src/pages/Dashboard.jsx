@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DashboardHome } from './DashboardHome'
 
@@ -63,60 +63,193 @@ function Dashboard({ onLogout }) {
   const [analysisResult, setAnalysisResult]   = useState('')
   const [analysisLabel, setAnalysisLabel]     = useState('')
   const [openGroups, setOpenGroups]           = useState(['AI Analysis','DevSecOps','Visualization','History'])
-  const [showProfile, setShowProfile] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [showLogout, setShowLogout] = useState(false)
+  const [showProfile, setShowProfile]         = useState(false)
+  const [successMsg, setSuccessMsg]           = useState('')
+  const [showLogout, setShowLogout]           = useState(false)
   const [profile, setProfile]                 = useState({ name: 'User', email: 'user@email.com', phone: ' ' })
   const [editProfile, setEditProfile]         = useState({ ...profile })
 
   const toggleGroup = (label) => setOpenGroups(p => p.includes(label) ? p.filter(g => g !== label) : [...p, label])
 
-  const handleReview = async () => {
-    if (!code.trim()) return
-    setIsAnalyzing(true)
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 1000,
-          messages: [{ role: "user", content: `Review this code:\n\n${code}` }],
-        }),
-      })
-      const data = await res.json()
-      setAnalysisResult(data.content?.map(b => b.text || '').join('\n') || 'No result.')
-      setAnalysisLabel('Code Review')
-    } catch { setAnalysisResult('⚠️ Something went wrong.') }
-    setIsAnalyzing(false)
-  }
+  // Load profile from backend
+  useEffect(() => {
+    const fetchProfile = async () => {
+      const token = localStorage.getItem("acr_token");
+      if (!token) {
+        onLogout();
+        return;
+      }
+      try {
+        const res = await fetch("/api/auth/profile", {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const userProfile = {
+            name: `${data.first_name} ${data.last_name}`,
+            email: data.email,
+            phone: data.phone || '',
+            dob: data.dob || ''
+          };
+          setProfile(userProfile);
+          setEditProfile(userProfile);
+        } else {
+          onLogout();
+        }
+      } catch (err) {
+        console.error("Failed to load profile", err);
+      }
+    };
+    fetchProfile();
+  }, [onLogout]);
 
-  const handleSave = () => {
-  const sessions = JSON.parse(localStorage.getItem('savedSessions') || '[]')
-  sessions.push({ code, result: analysisResult, label: analysisLabel, date: new Date().toISOString() })
-  localStorage.setItem('savedSessions', JSON.stringify(sessions))
-  setSuccessMsg('💾 Session saved successfully!')
-  setTimeout(() => setSuccessMsg(''), 3000)
-}
+  // Handle code review calling FastAPI backend
+  const handleReview = async (customCode, featureLabel = 'Code Review', customPrompt = null) => {
+    const targetCode = typeof customCode === "string" ? customCode : code;
+    if (!targetCode.trim()) return;
+    
+    setIsAnalyzing(true);
+    setAnalysisLabel(featureLabel);
+    setAnalysisResult('');
+    
+    const token = localStorage.getItem("acr_token");
+    try {
+      const res = await fetch("/api/analysis/review", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          code: targetCode,
+          prompt: customPrompt,
+          label: featureLabel
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAnalysisResult(data.result);
+      } else {
+        const errorDetail = typeof data.detail === "string" ? data.detail : "Failed to analyze code.";
+        setAnalysisResult(`⚠️ Error: ${errorDetail}`);
+      }
+    } catch (err) {
+      setAnalysisResult('⚠️ Connection to backend failed. Is the backend server running?');
+    }
+    setIsAnalyzing(false);
+  };
+
+  // Handle save session calling FastAPI backend
+  const handleSave = async () => {
+    const token = localStorage.getItem("acr_token");
+    try {
+      const res = await fetch("/api/saved-sessions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          code,
+          result: analysisResult,
+          label: analysisLabel
+        })
+      });
+      if (res.ok) {
+        setSuccessMsg('💾 Session saved successfully!');
+        setTimeout(() => setSuccessMsg(''), 3000);
+      } else {
+        const data = await res.json();
+        const errorDetail = typeof data.detail === "string" ? data.detail : "Error saving session.";
+        setSuccessMsg(`❌ Save failed: ${errorDetail}`);
+        setTimeout(() => setSuccessMsg(''), 3000);
+      }
+    } catch (err) {
+      setSuccessMsg('❌ Connection error');
+      setTimeout(() => setSuccessMsg(''), 3000);
+    }
+  };
+
+  // Handle update profile calling FastAPI backend
+  const handleUpdateProfile = async () => {
+    const token = localStorage.getItem("acr_token");
+    const names = editProfile.name.trim().split(" ");
+    const firstName = names[0] || "";
+    const lastName = names.slice(1).join(" ") || " ";
+    
+    try {
+      const res = await fetch("/api/auth/profile", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          email: editProfile.email,
+          phone: editProfile.phone,
+          dob: editProfile.dob
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const updated = {
+          name: `${data.first_name} ${data.last_name}`,
+          email: data.email,
+          phone: data.phone || '',
+          dob: data.dob || ''
+        };
+        setProfile(updated);
+        setEditProfile(updated);
+        setShowProfile(false);
+        setSuccessMsg('✅ Profile updated successfully!');
+        setTimeout(() => setSuccessMsg(''), 3000);
+      } else {
+        const data = await res.json();
+        const errorDetail = typeof data.detail === "string" ? data.detail : "Error updating profile.";
+        setSuccessMsg(`❌ Update failed: ${errorDetail}`);
+        setTimeout(() => setSuccessMsg(''), 3000);
+      }
+    } catch (err) {
+      setSuccessMsg('❌ Connection error');
+      setTimeout(() => setSuccessMsg(''), 3000);
+    }
+  };
   
 
   const renderComponent = () => {
+    // Shared props for analysis tool subpages
+    const toolProps = {
+      code,
+      isAnalyzing,
+      analysisResult,
+      analysisLabel,
+      onSave: handleSave
+    };
+
     switch (activeComponent) {
       case 'ai-analysis':      return <AIAnalysis />
       case 'chat-assistant':   return <AIChatAssistant />
-      case 'bug-detection':    return <BugDetection />
-      case 'code-explanation': return <CodeExplanation />
-      case 'semantic-search':  return <SemanticSearch />
+      case 'bug-detection':    
+        return <BugDetection {...toolProps} onReview={(c) => handleReview(c, 'Bug Detection', 'Analyse this code for bugs, errors, and logical issues. List each bug with its line number, severity (critical/warning/minor), and a short fix suggestion. Be concise.')} />
+      case 'code-explanation': 
+        return <CodeExplanation {...toolProps} onReview={(c) => handleReview(c, 'Code Explanation', 'Explain what this code does in plain English. Give a 2-sentence summary, then list the key functions/logic in bullet points. Be concise.')} />
+      case 'semantic-search':  
+        return <SemanticSearch {...toolProps} onReview={(c) => handleReview(c, 'Semantic Search', 'Map the semantic structure of this code. List the main functions, classes, and patterns found. Keep it brief and structured.')} />
       case 'devsecops':        return <DevsecOps />
-      case 'security-scanner': return <SecurityScanner />
-      case 'vulnerability':    return <VulnerabilityAnalysis />
+      case 'security-scanner': 
+        return <SecurityScanner {...toolProps} onReview={(c) => handleReview(c, 'Security Scanner', 'Scan this code for security vulnerabilities and unsafe practices. List each issue with severity and a one-line fix. Be direct and concise.')} />
+      case 'vulnerability':    
+        return <VulnerabilityAnalysis {...toolProps} onReview={(c) => handleReview(c, 'Vulnerability Analysis', 'Perform a deep vulnerability analysis on this code. Identify CVEs, injection risks, and exploitable weaknesses. List each with a severity rating.')} />
       case 'history':          return <History />
       case 'analysis-history': return <AnalysisHistory />
       case 'saved-sessions':   return <SavedSessions />
       case 'visualization':    return <Visualization />
-      case 'code-health':      return <CodeHealth />
+      case 'code-health':      
+        return <CodeHealth {...toolProps} onReview={(c) => handleReview(c, 'Code Health', 'Give a code health report. Score maintainability, readability, and test coverage out of 100. List the top 3 quality issues. Format: Score: X/100, then bullet points.')} />
       default: return (
-        <DashboardHome code={code} setCode={setCode} isAnalyzing={isAnalyzing}
-          analysisResult={analysisResult} analysisLabel={analysisLabel}
-          onReview={handleReview} onSave={handleSave} />
+        <DashboardHome code={code} setCode={setCode} onNavigate={setActiveComponent} />
       )
     }
   }
@@ -249,7 +382,7 @@ function Dashboard({ onLogout }) {
             ))}
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button onClick={() => { setProfile({ ...editProfile }); setShowProfile(false); setSuccessMsg('✅ Profile updated successfully!');setTimeout(() => setSuccessMsg(' '),3000); }}
+              <button onClick={handleUpdateProfile}
                 style={{ flex: 1, padding: '10px', background: 'linear-gradient(135deg,#7c3aed,#4f46e5)', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: '700', cursor: 'pointer' }}>
                 Save
               </button>

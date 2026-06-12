@@ -147,7 +147,7 @@ function DetailPanel({ session, onClose, onDelete }) {
             {session.details?.summary && (
               <div style={{ background: "#0a0e17", border: "1px solid #1e2d45", borderRadius: 12, padding: 18, marginBottom: 16 }}>
                 <div style={{ fontSize: 11, color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Summary</div>
-                <p style={{ fontSize: 13, color: "#8892a4", lineHeight: 1.7, margin: 0 }}>{session.details.summary}</p>
+                <pre style={{ fontSize: 13, color: "#8892a4", lineHeight: 1.7, margin: 0, whiteSpace: "pre-wrap", fontFamily: "sans-serif" }}>{session.details.summary}</pre>
               </div>
             )}
 
@@ -240,6 +240,88 @@ function DetailPanel({ session, onClose, onDelete }) {
   );
 }
 
+function mapSessionFromBackend(s) {
+  // Try to parse health score from result text
+  let score = 85;
+  const scoreMatch = s.result ? s.result.match(/(?:score|health|rating)\s*:\s*(\d+)\s*\/\s*100/i) : null;
+  const scorePercentMatch = s.result ? s.result.match(/(\d+)\s*%/ ) : null;
+  if (scoreMatch && scoreMatch[1]) {
+    score = parseInt(scoreMatch[1]);
+  } else if (scorePercentMatch && scorePercentMatch[1]) {
+    score = parseInt(scorePercentMatch[1]);
+  }
+  
+  // Grade
+  let grade = "B";
+  if (score >= 90) grade = "A+";
+  else if (score >= 80) grade = "A";
+  else if (score >= 70) grade = "B";
+  else if (score >= 60) grade = "C";
+  else grade = "D";
+
+  // Parse issues count
+  const resultLower = s.result ? s.result.toLowerCase() : "";
+  const criticalCount = (resultLower.match(/critical/g) || []).length;
+  const bugCount = (resultLower.match(/bug|error|incorrect/g) || []).length;
+  const securityCount = (resultLower.match(/security|vuln|unsafe|cve/g) || []).length;
+  const minorCount = (resultLower.match(/minor|warning|suggest/g) || []).length;
+
+  // Language detection
+  let language = "JavaScript";
+  const codeLower = s.code ? s.code.toLowerCase() : "";
+  if (codeLower.includes("def ") || codeLower.includes("import pandas") || codeLower.includes("print(")) {
+    language = "Python";
+  } else if (codeLower.includes("package main") || codeLower.includes("func ")) {
+    language = "Go";
+  } else if (codeLower.includes("public class ") || codeLower.includes("system.out.print")) {
+    language = "Java";
+  } else if (codeLower.includes("fn main()") || codeLower.includes("let mut ")) {
+    language = "Rust";
+  } else if (codeLower.includes("interface ") || codeLower.includes("type ")) {
+    language = "TypeScript";
+  }
+
+  // Parse date
+  let dateStr = "";
+  let timeStr = "";
+  try {
+    const d = new Date(s.date);
+    dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    timeStr = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  } catch (err) {
+    dateStr = s.date || "Unknown";
+    timeStr = "";
+  }
+
+  return {
+    id: s.id,
+    fileName: s.label || "Code Review",
+    language: language,
+    healthScore: score,
+    grade: grade,
+    date: dateStr,
+    time: timeStr,
+    savedAt: dateStr,
+    issues: {
+      critical: criticalCount,
+      bug: bugCount,
+      security: securityCount,
+      minor: minorCount,
+      smell: 0
+    },
+    details: {
+      summary: s.result || "No review output.",
+      suggestions: [],
+      metrics: {
+        maintainability: score,
+        coverage: 0,
+        complexity: Math.max(0, 100 - score)
+      }
+    },
+    rawCode: s.code || ""
+  };
+}
+
 export default function SavedSessions() {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -249,27 +331,33 @@ export default function SavedSessions() {
   const [deleteToast, setDeleteToast] = useState(false);
 
   useEffect(() => {
-    // TODO: Backend ready ஆனா இந்த line uncomment பண்ணு, mock block-ஐ remove பண்ணு
-    // fetch("/api/saved-sessions")
-    //   .then(res => { if (!res.ok) throw new Error("Failed to fetch saved sessions"); return res.json(); })
-    //   .then(data => { setSessions(data); setLoading(false); })
-    //   .catch(err => { setError(err.message); setLoading(false); });
-
-    // MOCK MODE — backend இல்லாம frontend work ஆக
-    setLoading(false);
-    setSessions([]);
+    const token = localStorage.getItem("acr_token");
+    fetch("/api/saved-sessions", {
+      headers: { "Authorization": `Bearer ${token}` }
+    })
+      .then(res => { if (!res.ok) throw new Error("Failed to fetch saved sessions"); return res.json(); })
+      .then(data => { 
+        setSessions(data.map(mapSessionFromBackend)); 
+        setLoading(false); 
+      })
+      .catch(err => { setError(err.message); setLoading(false); });
   }, []);
 
   const handleDelete = async (id) => {
+    const token = localStorage.getItem("acr_token");
     try {
-      // TODO: Backend ready ஆனா uncomment பண்ணு
-      // await fetch(`/api/saved-sessions/${id}`, { method: "DELETE" });
-      setSessions(prev => prev.filter(s => s.id !== id));
-      setSelected(null);
-      setDeleteToast(true);
-      setTimeout(() => setDeleteToast(false), 3000);
-    } catch {
-      // TODO: show error toast
+      const res = await fetch(`/api/saved-sessions/${id}`, { 
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== id));
+        setSelected(null);
+        setDeleteToast(true);
+        setTimeout(() => setDeleteToast(false), 3000);
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 

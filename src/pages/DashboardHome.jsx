@@ -63,18 +63,21 @@ const FEATURES = [
 
 // ─── CLAUDE API CALL ──────────────────────────────────────────────────────────
 async function callClaude(prompt, code) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const token = localStorage.getItem("acr_token");
+  const res = await fetch("/api/analysis/review", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { 
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 600,
-      system: "You are a senior code reviewer. Be concise, structured, and direct. Never include preambles.",
-      messages: [{ role: "user", content: `${prompt}\n\n\`\`\`\n${code}\n\`\`\`` }],
+      code: code,
+      prompt: prompt,
+      label: "Batch Review"
     }),
   });
   const data = await res.json();
-  return data.content?.map((b) => b.text || "").join("\n") || "No response.";
+  return data.result || "No response.";
 }
 
 // ─── STATUS PILL ──────────────────────────────────────────────────────────────

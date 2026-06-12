@@ -31,22 +31,32 @@ export default function AIChatAssistant() {
     setChatHistory(newHistory);
     setInput("");
     setLoading(true);
+    
+    const token = localStorage.getItem("acr_token");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+      const res = await fetch("/api/analysis/chat", {
+        method: "POST", 
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 1200,
-          system: "You are a helpful AI coding assistant. Answer questions about code clearly and concisely. Format code examples with triple backticks. Be precise and conversational.",
-          messages: newHistory,
+          messages: newHistory.map(msg => ({ role: msg.role, content: msg.content })),
+          system_instruction: "You are a helpful AI coding assistant. Answer questions about code clearly and concisely. Format code examples with triple backticks. Be precise and conversational."
         }),
       });
       const data  = await res.json();
-      const reply = data.content?.map(b => b.text || "").join("\n") || "No response.";
-      const aiMsg = { role: "assistant", content: reply, id: Date.now() + 1 };
-      setMessages(p => [...p, aiMsg]);
-      setChatHistory(p => [...p, { role: "assistant", content: reply }]);
+      if (res.ok) {
+        const reply = data.result || "No response.";
+        const aiMsg = { role: "assistant", content: reply, id: Date.now() + 1 };
+        setMessages(p => [...p, aiMsg]);
+        setChatHistory(p => [...p, { role: "assistant", content: reply }]);
+      } else {
+        const detailMsg = typeof data.detail === "string" ? data.detail : "Something went wrong.";
+        setMessages(p => [...p, { role: "assistant", content: `⚠️ Error: ${detailMsg}`, id: Date.now() + 1 }]);
+      }
     } catch {
-      setMessages(p => [...p, { role: "assistant", content: "⚠️ Something went wrong. Please try again.", id: Date.now() + 1 }]);
+      setMessages(p => [...p, { role: "assistant", content: "⚠️ Backend connection error. Please try again.", id: Date.now() + 1 }]);
     }
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 80);
